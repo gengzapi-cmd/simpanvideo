@@ -64,6 +64,12 @@ fun Modifier.glow(color: Color = CyanWarm, alpha: Float = 0.2f, radius: Float = 
     drawCircle(color = color.copy(alpha = alpha), radius = size.width / 2 + radius, center = Offset(size.width / 2, size.height / 2))
 }
 
+import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.material3.CircularProgressIndicator
+import com.simpanvideo.app.EngineState
+import com.simpanvideo.app.EngineStatus
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -85,7 +91,35 @@ class MainActivity : ComponentActivity() {
             ) {
                 Surface(modifier = Modifier.fillMaxSize(), color = BgColor) {
                     ProvideTextStyle(TextStyle(fontFamily = PoppinsFont)) {
-                        App()
+                        val engineStatus by EngineState.status.collectAsState()
+                        
+                        when (engineStatus) {
+                            EngineStatus.INITIALIZING -> {
+                                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        CircularProgressIndicator(color = CyanWarm)
+                                        Spacer(modifier = Modifier.height(16.dp))
+                                        Text("Menyiapkan Mesin Pengunduh...", color = Color.White, fontWeight = FontWeight.Bold)
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text("Mohon tunggu sebentar", color = Color.LightGray, fontSize = 12.sp)
+                                    }
+                                }
+                            }
+                            EngineStatus.ERROR -> {
+                                Box(modifier = Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Icon(painter = painterResource(id = android.R.drawable.ic_dialog_alert), contentDescription = null, tint = Color.Red, modifier = Modifier.size(48.dp))
+                                        Spacer(modifier = Modifier.height(16.dp))
+                                        Text("Gagal Menyalakan Mesin", color = Color.Red, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Text(EngineState.errorMessage, color = Color.White, fontSize = 14.sp, textAlign = TextAlign.Center)
+                                    }
+                                }
+                            }
+                            EngineStatus.READY -> {
+                                App()
+                            }
+                        }
                     }
                 }
             }
