@@ -60,6 +60,10 @@ import android.content.Context
 import java.io.File
 import android.widget.Toast
 import java.util.concurrent.TimeUnit
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 
 val BgColor = Color(0xFF0D1117)
 val SurfaceColor = Color(0xFF161B22)
@@ -84,6 +88,11 @@ fun Modifier.glow(color: Color = CyanWarm, alpha: Float = 0.2f, radius: Float = 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (Build.VERSION.SDK_INT >= 33) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 101)
+            }
+        }
         setContent {
             val customTypography = Typography(
                 bodyLarge = MaterialTheme.typography.bodyLarge.copy(fontFamily = PoppinsFont),
@@ -118,13 +127,13 @@ class MainActivity : ComponentActivity() {
                                             model = R.drawable.engine,
                                             imageLoader = imageLoader,
                                             contentDescription = "Loading Engine",
-                                            modifier = Modifier.size(80.dp)
+                                            modifier = Modifier.size(60.dp)
                                         )
-                                        Spacer(modifier = Modifier.width(20.dp))
+                                        Spacer(modifier = Modifier.width(10.dp))
                                         Column {
-                                            Text("Menyiapkan Mesin...", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                                            Spacer(modifier = Modifier.height(4.dp))
-                                            Text(if(EngineState.errorMessage.isBlank()) "Memuat dependensi inti" else EngineState.errorMessage, color = Color.LightGray, fontSize = 12.sp)
+                                            Text("Menyiapkan Mesin...", fontFamily = PoppinsFont, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                            Spacer(modifier = Modifier.height(2.dp))
+                                            Text(if(EngineState.errorMessage.isBlank()) "Memuat dependensi inti" else EngineState.errorMessage, fontFamily = PoppinsFont, color = Color.LightGray, fontSize = 12.sp)
                                         }
                                     }
                                 }
@@ -174,7 +183,7 @@ fun App() {
     }
 }
 
-fun startDownload(context: Context, videoUrl: String, formatId: String, title: String) {
+fun startDownload(context: Context, videoUrl: String, formatId: String, title: String, isAudio: Boolean = false) {
     Toast.makeText(context, "Memulai unduhan: $title", Toast.LENGTH_SHORT).show()
     CoroutineScope(Dispatchers.IO).launch {
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -196,8 +205,11 @@ fun startDownload(context: Context, videoUrl: String, formatId: String, title: S
 
         try {
             val request = YoutubeDLRequest(videoUrl)
-            // Memilih format spesifik, fallback ke bestaudio jika videonya tidak ada audio
-            request.addOption("-f", "$formatId+bestaudio/best")
+            if (isAudio) {
+                request.addOption("-f", formatId)
+            } else {
+                request.addOption("-f", "$formatId+bestaudio/best")
+            }
             
             val downloadDir = File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS), "SimpanVideo")
             if (!downloadDir.exists()) downloadDir.mkdirs()
@@ -268,7 +280,10 @@ fun HomeScreen() {
         coroutineScope.launch {
             try {
                 val info = withContext(Dispatchers.IO) {
-                    YoutubeDL.getInstance().getInfo(urlInput)
+                    val req = YoutubeDLRequest(urlInput)
+                    req.addOption("--no-playlist")
+                    req.addOption("--no-warnings")
+                    YoutubeDL.getInstance().getInfo(req)
                 }
                 mediaInfo = info
             } catch (e: Exception) {
@@ -423,10 +438,8 @@ fun HomeScreen() {
                         Text(finalTitle, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp))
 
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            // Foto Profil Diperbesar ke 48.dp
-                            val uploaderInitial = info.uploader?.firstOrNull()?.toString()?.uppercase() ?: "?"
-                            Box(modifier = Modifier.size(48.dp).clip(CircleShape).background(GradientPrimary), contentAlignment = Alignment.Center) {
-                                Text(uploaderInitial, color = Color.Black, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp)
+                            Box(modifier = Modifier.size(48.dp).clip(CircleShape).background(SurfaceColor).border(1.dp, BorderColor, CircleShape), contentAlignment = Alignment.Center) {
+                                Icon(Icons.Default.Person, contentDescription = null, tint = Color.LightGray, modifier = Modifier.size(24.dp))
                             }
                             Spacer(modifier = Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
@@ -449,7 +462,7 @@ fun HomeScreen() {
                                 val formats = info.formats ?: arrayListOf()
                                 
                                 val bestAudio = formats.filter { it.ext == "m4a" || it.ext == "mp3" || (it.acodec != "none" && it.vcodec == "none") }.maxByOrNull { it.abr?.toString()?.toDoubleOrNull() ?: 0.0 }
-                                val videoFormats = formats.filter { it.vcodec != "none" && it.ext == "mp4" }
+                                val videoFormats = formats.filter { it.vcodec != "none" && it.vcodec != null }
                                     .sortedByDescending { it.height ?: 0 }
                                     .distinctBy { it.height }
                                     .take(4) // 1080p, 720p, 480p, dll
@@ -459,11 +472,11 @@ fun HomeScreen() {
                                 
                                 videoFormats.forEach { fmt ->
                                     val sizeStr = if ((fmt.fileSize ?: 0L) > 0L) formatNumber(fmt.fileSize!!) else "Ukuran tidak diketahui"
-                                    downloadOptions.add(DlOption("${fmt.height}p Video", "${fmt.ext?.uppercase()} · $sizeStr", "video", fmt.formatId ?: ""))
+                                    downloadOptions.add(DlOption("${fmt.height}p", "${fmt.ext?.uppercase()} · $sizeStr", "video", fmt.formatId ?: ""))
                                 }
                                 if (bestAudio != null) {
                                     val sizeStr = if ((bestAudio.fileSize ?: 0L) > 0L) formatNumber(bestAudio.fileSize!!) else "Ukuran tidak diketahui"
-                                    downloadOptions.add(DlOption("Audio Berkualitas Tinggi", "${bestAudio.ext?.uppercase()} · $sizeStr", "audio", bestAudio.formatId ?: ""))
+                                    downloadOptions.add(DlOption("Audio", "${bestAudio.ext?.uppercase()} · $sizeStr", "audio", bestAudio.formatId ?: ""))
                                 }
 
                                 downloadOptions.forEachIndexed { index, option ->
@@ -483,7 +496,7 @@ fun HomeScreen() {
                                             Spacer(modifier = Modifier.width(10.dp))
                                         }
                                         Box(modifier = Modifier.size(36.dp).clip(CircleShape).background(GradientPrimary).clickable { 
-                                            startDownload(context, urlInput, option.formatId, finalTitle)
+                                            startDownload(context, urlInput, option.formatId, finalTitle, isAudio = (option.kind == "audio"))
                                         }, contentAlignment = Alignment.Center) {
                                             Icon(painterResource(R.drawable.ic_download), contentDescription = null, tint = Color.Black, modifier = Modifier.size(16.dp))
                                         }
