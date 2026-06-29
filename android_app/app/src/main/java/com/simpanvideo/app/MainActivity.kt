@@ -64,12 +64,6 @@ fun Modifier.glow(color: Color = CyanWarm, alpha: Float = 0.2f, radius: Float = 
     drawCircle(color = color.copy(alpha = alpha), radius = size.width / 2 + radius, center = Offset(size.width / 2, size.height / 2))
 }
 
-import androidx.compose.runtime.collectAsState
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.material3.CircularProgressIndicator
-import com.simpanvideo.app.EngineState
-import com.simpanvideo.app.EngineStatus
-
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
