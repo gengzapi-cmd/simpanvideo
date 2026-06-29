@@ -7,6 +7,7 @@
     <application
         android:name=".SimpanVideoApp"
         android:allowBackup="true"
+        android:extractNativeLibs="true"
         android:label="SimpanVideo"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar"

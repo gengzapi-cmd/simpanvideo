@@ -24,6 +24,13 @@ android {
             abiFilters.addAll(listOf("armeabi-v7a", "arm64-v8a"))
         }
     }
+    
+    // WAJIB: Memaksa Gradle untuk mengekstrak binary C++ (Python & FFmpeg) ke memori internal
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
 
     buildTypes {
         release {
