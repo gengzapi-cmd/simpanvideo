@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.yausername.youtubedl_android.YoutubeDL
 import com.yausername.youtubedl_android.mapper.VideoInfo
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -458,11 +459,11 @@ fun HomeScreen() {
                                 
                                 videoFormats.forEach { fmt ->
                                     val sizeStr = if ((fmt.filesize ?: 0L) > 0L) formatNumber(fmt.filesize!!) else "Ukuran tidak diketahui"
-                                    downloadOptions.add(DlOption("${fmt.height}p Video", "${fmt.ext?.uppercase()} · $sizeStr", "video", fmt.id ?: ""))
+                                    downloadOptions.add(DlOption("${fmt.height}p Video", "${fmt.ext?.uppercase()} · $sizeStr", "video", fmt.formatId ?: ""))
                                 }
                                 if (bestAudio != null) {
                                     val sizeStr = if ((bestAudio.filesize ?: 0L) > 0L) formatNumber(bestAudio.filesize!!) else "Ukuran tidak diketahui"
-                                    downloadOptions.add(DlOption("Audio Berkualitas Tinggi", "${bestAudio.ext?.uppercase()} · $sizeStr", "audio", bestAudio.id ?: ""))
+                                    downloadOptions.add(DlOption("Audio Berkualitas Tinggi", "${bestAudio.ext?.uppercase()} · $sizeStr", "audio", bestAudio.formatId ?: ""))
                                 }
 
                                 downloadOptions.forEachIndexed { index, option ->
