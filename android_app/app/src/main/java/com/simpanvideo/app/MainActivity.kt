@@ -43,6 +43,21 @@ import com.yausername.youtubedl_android.mapper.VideoInfo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import android.os.Build
+import coil.ImageLoader
+import coil.decode.GifDecoder
+import coil.decode.ImageDecoderDecoder
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.graphicsLayer
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import androidx.core.app.NotificationCompat
+import com.yausername.youtubedl_android.YoutubeDLRequest
+import android.content.Context
+import java.io.File
+import android.widget.Toast
 import java.util.concurrent.TimeUnit
 
 val BgColor = Color(0xFF0D1117)
@@ -91,12 +106,25 @@ class MainActivity : ComponentActivity() {
                         when (engineStatus) {
                             EngineStatus.INITIALIZING -> {
                                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                        CircularProgressIndicator(color = CyanWarm)
-                                        Spacer(modifier = Modifier.height(16.dp))
-                                        Text("Menyiapkan Mesin Pengunduh...", color = Color.White, fontWeight = FontWeight.Bold)
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        Text("Mohon tunggu sebentar", color = Color.LightGray, fontSize = 12.sp)
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        val context = LocalContext.current
+                                        val imageLoader = remember(context) {
+                                            ImageLoader.Builder(context).components {
+                                                if (Build.VERSION.SDK_INT >= 28) add(ImageDecoderDecoder.Factory()) else add(GifDecoder.Factory())
+                                            }.build()
+                                        }
+                                        AsyncImage(
+                                            model = R.drawable.engine,
+                                            imageLoader = imageLoader,
+                                            contentDescription = "Loading Engine",
+                                            modifier = Modifier.size(80.dp).graphicsLayer { blendMode = BlendMode.Multiply }
+                                        )
+                                        Spacer(modifier = Modifier.width(20.dp))
+                                        Column {
+                                            Text("Menyiapkan Mesin...", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Text(if(EngineState.errorMessage.isBlank()) "Memuat dependensi inti" else EngineState.errorMessage, color = Color.LightGray, fontSize = 12.sp)
+                                        }
                                     }
                                 }
                             }
@@ -145,6 +173,66 @@ fun App() {
     }
 }
 
+fun startDownload(context: Context, videoUrl: String, formatId: String, title: String) {
+    Toast.makeText(context, "Memulai unduhan: $title", Toast.LENGTH_SHORT).show()
+    CoroutineScope(Dispatchers.IO).launch {
+        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val channelId = "simpanvideo_downloads"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(channelId, "Unduhan", NotificationManager.IMPORTANCE_LOW)
+            notificationManager.createNotificationChannel(channel)
+        }
+        val notificationId = title.hashCode()
+        val builder = NotificationCompat.Builder(context, channelId)
+            .setSmallIcon(android.R.drawable.stat_sys_download)
+            .setContentTitle(title)
+            .setContentText("Menyiapkan unduhan...")
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setOngoing(true)
+            .setProgress(100, 0, true)
+
+        notificationManager.notify(notificationId, builder.build())
+
+        try {
+            val request = YoutubeDLRequest(videoUrl)
+            // Memilih format spesifik, fallback ke bestaudio jika videonya tidak ada audio
+            request.addOption("-f", "$formatId+bestaudio/best")
+            
+            val downloadDir = File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS), "SimpanVideo")
+            if (!downloadDir.exists()) downloadDir.mkdirs()
+            
+            val safeTitle = title.replace(Regex("[\\\\/:*?\"<>|]"), "_")
+            request.addOption("-o", "${downloadDir.absolutePath}/$safeTitle.%(ext)s")
+
+            var lastProgress = -1
+            com.yausername.youtubedl_android.YoutubeDL.getInstance().execute(request, "task_${System.currentTimeMillis()}") { progress, _, _ ->
+                val currentProgress = progress.toInt()
+                if (currentProgress != lastProgress && currentProgress >= 0) {
+                    lastProgress = currentProgress
+                    builder.setProgress(100, currentProgress, false)
+                        .setContentText("Mengunduh... $currentProgress%")
+                    notificationManager.notify(notificationId, builder.build())
+                }
+            }
+
+            builder.setContentText("Selesai diunduh!")
+                .setProgress(0, 0, false)
+                .setOngoing(false)
+                .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            notificationManager.notify(notificationId, builder.build())
+            withContext(Dispatchers.Main) { Toast.makeText(context, "Selesai mengunduh $title", Toast.LENGTH_LONG).show() }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            builder.setContentText("Gagal: ${e.message}")
+                .setProgress(0, 0, false)
+                .setOngoing(false)
+                .setSmallIcon(android.R.drawable.stat_notify_error)
+            notificationManager.notify(notificationId, builder.build())
+            withContext(Dispatchers.Main) { Toast.makeText(context, "Gagal mengunduh: ${e.message}", Toast.LENGTH_LONG).show() }
+        }
+    }
+}
+
 fun formatDuration(durationSeconds: Int): String {
     val minutes = durationSeconds / 60
     val seconds = durationSeconds % 60
@@ -164,10 +252,11 @@ fun HomeScreen() {
     var urlInput by remember { mutableStateOf("") }
     var isLoading by remember { mutableStateOf(false) }
     var mediaInfo by remember { mutableStateOf<VideoInfo?>(null) }
-    var openOptions by remember { mutableStateOf(true) }
+    var openOptions by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     
     val coroutineScope = rememberCoroutineScope()
+    val clipboardManager = LocalClipboardManager.current
 
     fun analyzeUrl() {
         if (urlInput.isBlank()) return
@@ -249,8 +338,10 @@ fun HomeScreen() {
                     )
                     
                     Box(modifier = Modifier.clip(RoundedCornerShape(16.dp)).background(Color(0x3300E5FF)).clickable { 
-                        // Jika PASTE diklik, idealnya tarik dari clipboard, tapi untuk sekarang kita langsung analisa
-                        analyzeUrl() 
+                        clipboardManager.getText()?.text?.let { 
+                            urlInput = it 
+                            analyzeUrl()
+                        }
                     }.padding(horizontal = 12.dp, vertical = 6.dp), contentAlignment = Alignment.Center) {
                         Text("PASTE", color = CyanWarm, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     }
@@ -332,7 +423,10 @@ fun HomeScreen() {
 
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             // Foto Profil Diperbesar ke 48.dp
-                            Box(modifier = Modifier.size(48.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Color.Magenta, Color.Red))))
+                            val uploaderInitial = info.uploader?.firstOrNull()?.toString()?.uppercase() ?: "?"
+                            Box(modifier = Modifier.size(48.dp).clip(CircleShape).background(GradientPrimary), contentAlignment = Alignment.Center) {
+                                Text(uploaderInitial, color = Color.Black, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp)
+                            }
                             Spacer(modifier = Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(info.uploader ?: "Unknown", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
@@ -342,23 +436,44 @@ fun HomeScreen() {
                         }
 
                         Spacer(modifier = Modifier.height(14.dp))
+                        val rotation by animateFloatAsState(if (openOptions) 180f else 0f)
                         Row(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(BgColor).border(1.dp, BorderColor, RoundedCornerShape(20.dp)).clickable { openOptions = !openOptions }.padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                             Text("Pilih kualitas unduhan", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
-                            Icon(Icons.Default.KeyboardArrowDown, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                            Icon(Icons.Default.KeyboardArrowDown, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp).graphicsLayer { rotationZ = rotation })
                         }
 
                         AnimatedVisibility(visible = openOptions, enter = expandVertically(spring(stiffness = Spring.StiffnessLow)), exit = shrinkVertically(spring(stiffness = Spring.StiffnessLow))) {
                             Column(modifier = Modifier.padding(top = 8.dp)) {
-                                val options = listOf(Triple("1080p Full HD", "MP4 · 82.4 MB", "video"), Triple("Audio 320 kbps", "MP3 · 9.4 MB", "audio"))
-                                options.forEachIndexed { index, (label, desc, kind) ->
+                                val context = LocalContext.current
+                                val formats = info.formats ?: arrayListOf()
+                                
+                                val bestAudio = formats.filter { it.ext == "m4a" || it.ext == "mp3" || (it.acodec != "none" && it.vcodec == "none") }.maxByOrNull { it.abr ?: 0 }
+                                val videoFormats = formats.filter { it.vcodec != "none" && it.ext == "mp4" }
+                                    .sortedByDescending { it.height ?: 0 }
+                                    .distinctBy { it.height }
+                                    .take(4) // 1080p, 720p, 480p, dll
+                                
+                                data class DlOption(val label: String, val desc: String, val kind: String, val formatId: String)
+                                val downloadOptions = mutableListOf<DlOption>()
+                                
+                                videoFormats.forEach { fmt ->
+                                    val sizeStr = if ((fmt.filesize ?: 0) > 0) formatNumber(fmt.filesize!!) else "Ukuran tidak diketahui"
+                                    downloadOptions.add(DlOption("${fmt.height}p Video", "${fmt.ext?.uppercase()} · $sizeStr", "video", fmt.id ?: ""))
+                                }
+                                if (bestAudio != null) {
+                                    val sizeStr = if ((bestAudio.filesize ?: 0) > 0) formatNumber(bestAudio.filesize!!) else "Ukuran tidak diketahui"
+                                    downloadOptions.add(DlOption("Audio Berkualitas Tinggi", "${bestAudio.ext?.uppercase()} · $sizeStr", "audio", bestAudio.id ?: ""))
+                                }
+
+                                downloadOptions.forEachIndexed { index, option ->
                                     Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp).clip(RoundedCornerShape(20.dp)).background(Color(0x80161B22)).border(1.dp, BorderColor, RoundedCornerShape(20.dp)).clickable { }.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                                        Box(modifier = Modifier.size(36.dp).clip(CircleShape).background(if (kind == "audio") Color(0x33A020F0) else Color(0x2200E5FF)), contentAlignment = Alignment.Center) {
-                                            Icon(painterResource(if (kind == "audio") R.drawable.ic_audio else R.drawable.ic_video), contentDescription = null, tint = CyanWarm, modifier = Modifier.size(16.dp))
+                                        Box(modifier = Modifier.size(36.dp).clip(CircleShape).background(if (option.kind == "audio") Color(0x33A020F0) else Color(0x2200E5FF)), contentAlignment = Alignment.Center) {
+                                            Icon(painterResource(if (option.kind == "audio") R.drawable.ic_audio else R.drawable.ic_video), contentDescription = null, tint = CyanWarm, modifier = Modifier.size(16.dp))
                                         }
                                         Spacer(modifier = Modifier.width(12.dp))
                                         Column(modifier = Modifier.weight(1f)) {
-                                            Text(label, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                                            Text(desc, color = TextMuted, fontSize = 11.sp)
+                                            Text(option.label, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                            Text(option.desc, color = TextMuted, fontSize = 11.sp)
                                         }
                                         if (index == 0) {
                                             Box(modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0x3300E5FF)).padding(horizontal = 8.dp, vertical = 4.dp)) {
@@ -366,7 +481,9 @@ fun HomeScreen() {
                                             }
                                             Spacer(modifier = Modifier.width(10.dp))
                                         }
-                                        Box(modifier = Modifier.size(36.dp).clip(CircleShape).background(GradientPrimary).clickable { }, contentAlignment = Alignment.Center) {
+                                        Box(modifier = Modifier.size(36.dp).clip(CircleShape).background(GradientPrimary).clickable { 
+                                            startDownload(context, urlInput, option.formatId, finalTitle)
+                                        }, contentAlignment = Alignment.Center) {
                                             Icon(painterResource(R.drawable.ic_download), contentDescription = null, tint = Color.Black, modifier = Modifier.size(16.dp))
                                         }
                                     }
