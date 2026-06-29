@@ -118,7 +118,7 @@ class MainActivity : ComponentActivity() {
                                             model = R.drawable.engine,
                                             imageLoader = imageLoader,
                                             contentDescription = "Loading Engine",
-                                            modifier = Modifier.size(80.dp).graphicsLayer { blendMode = BlendMode.Multiply }
+                                            modifier = Modifier.size(80.dp)
                                         )
                                         Spacer(modifier = Modifier.width(20.dp))
                                         Column {
@@ -458,11 +458,11 @@ fun HomeScreen() {
                                 val downloadOptions = mutableListOf<DlOption>()
                                 
                                 videoFormats.forEach { fmt ->
-                                    val sizeStr = if ((fmt.filesize ?: 0L) > 0L) formatNumber(fmt.filesize!!) else "Ukuran tidak diketahui"
+                                    val sizeStr = if ((fmt.fileSize ?: 0L) > 0L) formatNumber(fmt.fileSize!!) else "Ukuran tidak diketahui"
                                     downloadOptions.add(DlOption("${fmt.height}p Video", "${fmt.ext?.uppercase()} · $sizeStr", "video", fmt.formatId ?: ""))
                                 }
                                 if (bestAudio != null) {
-                                    val sizeStr = if ((bestAudio.filesize ?: 0L) > 0L) formatNumber(bestAudio.filesize!!) else "Ukuran tidak diketahui"
+                                    val sizeStr = if ((bestAudio.fileSize ?: 0L) > 0L) formatNumber(bestAudio.fileSize!!) else "Ukuran tidak diketahui"
                                     downloadOptions.add(DlOption("Audio Berkualitas Tinggi", "${bestAudio.ext?.uppercase()} · $sizeStr", "audio", bestAudio.formatId ?: ""))
                                 }
 
