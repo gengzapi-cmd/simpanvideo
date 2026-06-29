@@ -447,7 +447,7 @@ fun HomeScreen() {
                                 val context = LocalContext.current
                                 val formats = info.formats ?: arrayListOf()
                                 
-                                val bestAudio = formats.filter { it.ext == "m4a" || it.ext == "mp3" || (it.acodec != "none" && it.vcodec == "none") }.maxByOrNull { it.abr ?: 0 }
+                                val bestAudio = formats.filter { it.ext == "m4a" || it.ext == "mp3" || (it.acodec != "none" && it.vcodec == "none") }.maxByOrNull { it.abr?.toString()?.toDoubleOrNull() ?: 0.0 }
                                 val videoFormats = formats.filter { it.vcodec != "none" && it.ext == "mp4" }
                                     .sortedByDescending { it.height ?: 0 }
                                     .distinctBy { it.height }
@@ -457,11 +457,11 @@ fun HomeScreen() {
                                 val downloadOptions = mutableListOf<DlOption>()
                                 
                                 videoFormats.forEach { fmt ->
-                                    val sizeStr = if ((fmt.filesize ?: 0) > 0) formatNumber(fmt.filesize!!) else "Ukuran tidak diketahui"
+                                    val sizeStr = if ((fmt.filesize ?: 0L) > 0L) formatNumber(fmt.filesize!!) else "Ukuran tidak diketahui"
                                     downloadOptions.add(DlOption("${fmt.height}p Video", "${fmt.ext?.uppercase()} · $sizeStr", "video", fmt.id ?: ""))
                                 }
                                 if (bestAudio != null) {
-                                    val sizeStr = if ((bestAudio.filesize ?: 0) > 0) formatNumber(bestAudio.filesize!!) else "Ukuran tidak diketahui"
+                                    val sizeStr = if ((bestAudio.filesize ?: 0L) > 0L) formatNumber(bestAudio.filesize!!) else "Ukuran tidak diketahui"
                                     downloadOptions.add(DlOption("Audio Berkualitas Tinggi", "${bestAudio.ext?.uppercase()} · $sizeStr", "audio", bestAudio.id ?: ""))
                                 }
 
