@@ -336,11 +336,12 @@ fun startDownload(context: Context, videoUrl: String, formatId: String, title: S
             val etaRegex = Regex("""ETA\s+([\d:]+)""")
             val sizeRegex = Regex("""of\s+(~\s*)?([\d.]+\s*\w+)""")
 
-            com.yausername.youtubedl_android.YoutubeDL.getInstance().execute(request, taskId) { progress, eta, line ->
+            com.yausername.youtubedl_android.YoutubeDL.getInstance().execute(request, taskId) { progress, _, line ->
+                val lineStr = line ?: ""
                 val currentProgress = progress.toInt()
-                val speedMatch = speedRegex.find(line)?.groupValues?.get(1)?.trim() ?: ""
-                val etaMatch = etaRegex.find(line)?.groupValues?.get(1)?.trim() ?: ""
-                val sizeMatch = sizeRegex.find(line)?.groupValues?.get(2)?.trim() ?: ""
+                val speedMatch = speedRegex.find(lineStr)?.groupValues?.get(1)?.trim() ?: ""
+                val etaMatch = etaRegex.find(lineStr)?.groupValues?.get(1)?.trim() ?: ""
+                val sizeMatch = sizeRegex.find(lineStr)?.groupValues?.get(2)?.trim() ?: ""
                 
                 CoroutineScope(Dispatchers.Main).launch {
                     DownloadManager.updateTaskProgress(taskId, currentProgress, speedMatch, etaMatch, sizeMatch)
@@ -456,7 +457,6 @@ fun HomeScreen() {
             try {
                 val info = withContext(Dispatchers.IO) {
                     val req = YoutubeDLRequest(urlInput)
-                    req.addOption("--extract-flat")
                     req.addOption("--no-playlist")
                     req.addOption("--no-warnings")
                     req.addOption("--compat-options", "no-youtube-unavailable-videos")
