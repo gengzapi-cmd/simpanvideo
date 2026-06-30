@@ -62,6 +62,14 @@ import android.widget.Toast
 import android.content.pm.PackageManager
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import android.content.Intent
+import android.app.PendingIntent
+import androidx.compose.ui.viewinterop.AndroidView
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.webkit.WebChromeClient
+import android.annotation.SuppressLint
+import androidx.compose.runtime.mutableStateListOf
 
 val BgColor = Color(0xFF0D1117)
 val SurfaceColor = Color(0xFF161B22)
@@ -83,9 +91,107 @@ fun Modifier.glow(color: Color = CyanWarm, alpha: Float = 0.2f, radius: Float = 
     drawCircle(color = color.copy(alpha = alpha), radius = size.width / 2 + radius, center = Offset(size.width / 2, size.height / 2))
 }
 
+enum class Tab { HOME, DOWNLOADS, SETTINGS }
+
+object NavigationState {
+    val currentTab = mutableStateOf(Tab.HOME)
+}
+
+enum class TaskStatus { DOWNLOADING, COMPLETED, FAILED }
+
+data class DownloadTask(
+    val id: String,
+    val title: String,
+    val url: String,
+    val formatId: String,
+    val isAudio: Boolean,
+    var progress: Int = 0,
+    var speed: String = "",
+    var eta: String = "",
+    var size: String = "",
+    var status: TaskStatus = TaskStatus.DOWNLOADING,
+    val timestamp: Long = System.currentTimeMillis()
+)
+
+object DownloadManager {
+    val activeTasks = mutableStateListOf<DownloadTask>()
+    val historyTasks = mutableStateListOf<DownloadTask>()
+    
+    fun init(context: Context) {
+        val prefs = context.getSharedPreferences("download_history", Context.MODE_PRIVATE)
+        val json = prefs.getString("history", "[]") ?: "[]"
+        try {
+            val type = object : com.google.gson.reflect.TypeToken<List<DownloadTask>>() {}.type
+            val list = com.google.gson.Gson().fromJson<List<DownloadTask>>(json, type) ?: emptyList()
+            historyTasks.clear()
+            historyTasks.addAll(list)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+    
+    fun saveHistory(context: Context) {
+        val prefs = context.getSharedPreferences("download_history", Context.MODE_PRIVATE)
+        val json = com.google.gson.Gson().toJson(historyTasks.toList())
+        prefs.edit().putString("history", json).apply()
+    }
+    
+    fun addTask(task: DownloadTask) {
+        activeTasks.add(task)
+    }
+    
+    fun updateTaskProgress(id: String, progress: Int, speed: String, eta: String, size: String) {
+        val task = activeTasks.find { it.id == id }
+        if (task != null) {
+            task.progress = progress
+            task.speed = speed
+            task.eta = eta
+            task.size = size
+            val index = activeTasks.indexOf(task)
+            if (index != -1) {
+                activeTasks[index] = task.copy()
+            }
+        }
+    }
+    
+    fun completeTask(context: Context, id: String) {
+        val task = activeTasks.find { it.id == id }
+        if (task != null) {
+            activeTasks.remove(task)
+            val completedTask = task.copy(status = TaskStatus.COMPLETED, progress = 100)
+            historyTasks.add(0, completedTask)
+            saveHistory(context)
+        }
+    }
+    
+    fun failTask(context: Context, id: String, error: String) {
+        val task = activeTasks.find { it.id == id }
+        if (task != null) {
+            activeTasks.remove(task)
+            val failedTask = task.copy(status = TaskStatus.FAILED, speed = "Gagal: $error")
+            historyTasks.add(0, failedTask)
+            saveHistory(context)
+        }
+    }
+}
+
 class MainActivity : ComponentActivity() {
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleIntent(intent)
+    }
+
+    private fun handleIntent(intent: Intent?) {
+        val target = intent?.getStringExtra("navigate_to")
+        if (target == "downloads") {
+            NavigationState.currentTab.value = Tab.DOWNLOADS
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        DownloadManager.init(this)
+        handleIntent(intent)
         if (Build.VERSION.SDK_INT >= 33) {
             if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
                 ActivityCompat.requestPermissions(this, arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 101)
@@ -158,11 +264,9 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-enum class Tab { HOME, DOWNLOADS, SETTINGS }
-
 @Composable
 fun App() {
-    var currentTab by remember { mutableStateOf(Tab.HOME) }
+    var currentTab by NavigationState.currentTab
     Box(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 90.dp)) {
             Crossfade(
@@ -182,6 +286,10 @@ fun App() {
 }
 
 fun startDownload(context: Context, videoUrl: String, formatId: String, title: String, isAudio: Boolean = false) {
+    val taskId = "task_${System.currentTimeMillis()}"
+    val task = DownloadTask(id = taskId, title = title, url = videoUrl, formatId = formatId, isAudio = isAudio)
+    DownloadManager.addTask(task)
+
     Toast.makeText(context, "Memulai unduhan: $title", Toast.LENGTH_SHORT).show()
     CoroutineScope(Dispatchers.IO).launch {
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -191,6 +299,18 @@ fun startDownload(context: Context, videoUrl: String, formatId: String, title: S
             notificationManager.createNotificationChannel(channel)
         }
         val notificationId = title.hashCode()
+
+        val intent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra("navigate_to", "downloads")
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            context,
+            notificationId,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
         val builder = NotificationCompat.Builder(context, channelId)
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setContentTitle(title)
@@ -198,30 +318,49 @@ fun startDownload(context: Context, videoUrl: String, formatId: String, title: S
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setOngoing(true)
             .setProgress(100, 0, true)
+            .setContentIntent(pendingIntent)
 
         notificationManager.notify(notificationId, builder.build())
 
         try {
             val request = YoutubeDLRequest(videoUrl)
-            // formatId sudah mencakup string lengkap (tidak butuh if-else isAudio)
             request.addOption("-f", formatId)
             
             val downloadDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
-            // Tanpa subfolder, langsung ke folder Downloads
-
-            
             val safeTitle = title.replace(Regex("[\\\\/:*?\"<>|]"), "_")
             request.addOption("-o", "${downloadDir.absolutePath}/$safeTitle.%(ext)s")
 
             var lastProgress = -1
-            com.yausername.youtubedl_android.YoutubeDL.getInstance().execute(request, "task_${System.currentTimeMillis()}") { progress, _, _ ->
+            
+            val speedRegex = Regex("""at\s+([\d.]+\s*\w+/s)""")
+            val etaRegex = Regex("""ETA\s+([\d:]+)""")
+            val sizeRegex = Regex("""of\s+(~\s*)?([\d.]+\s*\w+)""")
+
+            com.yausername.youtubedl_android.YoutubeDL.getInstance().execute(request, taskId) { progress, eta, line ->
                 val currentProgress = progress.toInt()
+                val speedMatch = speedRegex.find(line)?.groupValues?.get(1)?.trim() ?: ""
+                val etaMatch = etaRegex.find(line)?.groupValues?.get(1)?.trim() ?: ""
+                val sizeMatch = sizeRegex.find(line)?.groupValues?.get(2)?.trim() ?: ""
+                
+                CoroutineScope(Dispatchers.Main).launch {
+                    DownloadManager.updateTaskProgress(taskId, currentProgress, speedMatch, etaMatch, sizeMatch)
+                }
+
                 if (currentProgress != lastProgress && currentProgress >= 0) {
                     lastProgress = currentProgress
+                    val detailText = when {
+                        speedMatch.isNotEmpty() && etaMatch.isNotEmpty() -> "$speedMatch · Sisa $etaMatch"
+                        speedMatch.isNotEmpty() -> speedMatch
+                        else -> "Mengunduh..."
+                    }
                     builder.setProgress(100, currentProgress, false)
-                        .setContentText("Mengunduh... $currentProgress%")
+                        .setContentText("Mengunduh: $currentProgress% ($detailText)")
                     notificationManager.notify(notificationId, builder.build())
                 }
+            }
+
+            CoroutineScope(Dispatchers.Main).launch {
+                DownloadManager.completeTask(context, taskId)
             }
 
             builder.setContentText("Selesai diunduh!")
@@ -232,12 +371,18 @@ fun startDownload(context: Context, videoUrl: String, formatId: String, title: S
             withContext(Dispatchers.Main) { Toast.makeText(context, "Selesai mengunduh $title", Toast.LENGTH_LONG).show() }
         } catch (e: Exception) {
             e.printStackTrace()
-            builder.setContentText("Gagal: ${e.message}")
+            val errorMsg = e.message ?: "Kesalahan tidak dikenal"
+            
+            CoroutineScope(Dispatchers.Main).launch {
+                DownloadManager.failTask(context, taskId, errorMsg)
+            }
+
+            builder.setContentText("Gagal: $errorMsg")
                 .setProgress(0, 0, false)
                 .setOngoing(false)
                 .setSmallIcon(android.R.drawable.stat_notify_error)
             notificationManager.notify(notificationId, builder.build())
-            withContext(Dispatchers.Main) { Toast.makeText(context, "Gagal mengunduh: ${e.message}", Toast.LENGTH_LONG).show() }
+            withContext(Dispatchers.Main) { Toast.makeText(context, "Gagal mengunduh: $errorMsg", Toast.LENGTH_LONG).show() }
         }
     }
 }
@@ -256,6 +401,38 @@ fun formatNumber(number: Long): String {
     }
 }
 
+fun getYoutubeId(url: String): String? {
+    val regex = Regex("""(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/ ]{11})""")
+    return regex.find(url)?.groupValues?.get(1)
+}
+
+fun getTikTokId(url: String): String? {
+    val regex = Regex("""\/video\/(\d+)""")
+    return regex.find(url)?.groupValues?.get(1)
+}
+
+@SuppressLint("SetJavaScriptEnabled")
+@Composable
+fun VideoWebView(url: String, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    AndroidView(
+        factory = {
+            android.webkit.WebView(context).apply {
+                settings.javaScriptEnabled = true
+                settings.mediaPlaybackRequiresUserGesture = false
+                settings.domStorageEnabled = true
+                settings.useWideViewPort = true
+                settings.loadWithOverviewMode = true
+                
+                webViewClient = android.webkit.WebViewClient()
+                webChromeClient = android.webkit.WebChromeClient()
+                loadUrl(url)
+            }
+        },
+        modifier = modifier
+    )
+}
+
 @Composable
 fun HomeScreen() {
     var urlInput by remember { mutableStateOf("") }
@@ -263,6 +440,7 @@ fun HomeScreen() {
     var mediaInfo by remember { mutableStateOf<VideoInfo?>(null) }
     var openOptions by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var isPlaying by remember { mutableStateOf(false) }
     
     val coroutineScope = rememberCoroutineScope()
     val clipboardManager = LocalClipboardManager.current
@@ -272,11 +450,13 @@ fun HomeScreen() {
         isLoading = true
         errorMessage = null
         mediaInfo = null
+        isPlaying = false
         
         coroutineScope.launch {
             try {
                 val info = withContext(Dispatchers.IO) {
                     val req = YoutubeDLRequest(urlInput)
+                    req.addOption("--extract-flat")
                     req.addOption("--no-playlist")
                     req.addOption("--no-warnings")
                     req.addOption("--compat-options", "no-youtube-unavailable-videos")
@@ -348,6 +528,8 @@ fun HomeScreen() {
                         onValueChange = { urlInput = it },
                         modifier = Modifier.weight(1f),
                         textStyle = TextStyle(color = Color.White, fontSize = 14.sp, fontFamily = PoppinsFont),
+                        singleLine = true,
+                        maxLines = 1,
                         cursorBrush = SolidColor(CyanWarm),
                         decorationBox = { innerTextField ->
                             if (urlInput.isEmpty()) {
@@ -407,6 +589,14 @@ fun HomeScreen() {
             Box(modifier = Modifier.fillMaxWidth().animateContentSize().clip(RoundedCornerShape(32.dp)).background(SurfaceColor).border(1.dp, BorderColor, RoundedCornerShape(32.dp))) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     
+                    val youtubeId = getYoutubeId(info.webpageUrl ?: urlInput)
+                    val tiktokId = getTikTokId(info.webpageUrl ?: urlInput)
+                    val embedUrl = when {
+                        youtubeId != null -> "https://www.youtube.com/embed/$youtubeId?autoplay=1"
+                        tiktokId != null -> "https://www.tiktok.com/embed/v2/$tiktokId"
+                        else -> info.webpageUrl ?: urlInput
+                    }
+
                     // Thumbnail Dinamis
                     val isPortrait = isTikTok
                     Box(
@@ -414,26 +604,30 @@ fun HomeScreen() {
                             .then(if (isPortrait) Modifier.fillMaxWidth(0.7f).padding(top = 16.dp).clip(RoundedCornerShape(20.dp)).aspectRatio(9f/16f) else Modifier.fillMaxWidth().aspectRatio(16f/9f))
                             .background(Color(0xFF2A1C30))
                     ) {
-                        // Gambar Asli dari yt-dlp
-                        AsyncImage(
-                            model = info.thumbnail,
-                            contentDescription = null,
-                            modifier = Modifier.fillMaxSize(),
-                            contentScale = ContentScale.Crop
-                        )
-                        
-                        Box(modifier = Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xCC000000)))))
-                        Row(modifier = Modifier.align(Alignment.TopStart).padding(12.dp).clip(RoundedCornerShape(12.dp)).background(Color(0x80000000)).padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(painterResource(if (isTikTok) R.drawable.ic_tiktok_mini else R.drawable.ic_youtube), contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(if (isTikTok) "TikTok" else "YouTube", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
-                        }
-                        Box(modifier = Modifier.align(Alignment.TopEnd).padding(12.dp).clip(RoundedCornerShape(12.dp)).background(Color(0x80000000)).padding(horizontal = 8.dp, vertical = 4.dp)) {
-                            Text(durationStr, color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
-                        }
-                        
-                        Box(modifier = Modifier.align(Alignment.Center).size(64.dp).glow(Color.White, 0.1f, 10f).clip(CircleShape).background(Color.White).clickable { }, contentAlignment = Alignment.Center) {
-                            Icon(painterResource(R.drawable.ic_play_large), contentDescription = null, tint = CyanWarm, modifier = Modifier.size(24.dp))
+                        if (isPlaying) {
+                            VideoWebView(url = embedUrl, modifier = Modifier.fillMaxSize())
+                        } else {
+                            // Gambar Asli dari yt-dlp
+                            AsyncImage(
+                                model = info.thumbnail,
+                                contentDescription = null,
+                                modifier = Modifier.fillMaxSize(),
+                                contentScale = ContentScale.Crop
+                            )
+                            
+                            Box(modifier = Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xCC000000)))))
+                            Row(modifier = Modifier.align(Alignment.TopStart).padding(12.dp).clip(RoundedCornerShape(12.dp)).background(Color(0x80000000)).padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(painterResource(if (isTikTok) R.drawable.ic_tiktok_mini else R.drawable.ic_youtube), contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(if (isTikTok) "TikTok" else "YouTube", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                            Box(modifier = Modifier.align(Alignment.TopEnd).padding(12.dp).clip(RoundedCornerShape(12.dp)).background(Color(0x80000000)).padding(horizontal = 8.dp, vertical = 4.dp)) {
+                                Text(durationStr, color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                            
+                            Box(modifier = Modifier.align(Alignment.Center).size(64.dp).glow(Color.White, 0.1f, 10f).clip(CircleShape).background(Color.White).clickable { isPlaying = true }, contentAlignment = Alignment.Center) {
+                                Icon(painterResource(R.drawable.ic_play_large), contentDescription = null, tint = CyanWarm, modifier = Modifier.size(24.dp))
+                            }
                         }
                     }
 
@@ -516,6 +710,19 @@ fun HomeScreen() {
 @Composable
 fun DownloadsScreen() {
     var filter by remember { mutableStateOf("Semua") }
+    val activeTasks = DownloadManager.activeTasks
+    val historyTasks = DownloadManager.historyTasks
+
+    val filteredHistory = remember(filter, historyTasks.size) {
+        historyTasks.filter { task ->
+            when (filter) {
+                "Video" -> !task.isAudio
+                "Audio" -> task.isAudio
+                else -> true
+            }
+        }
+    }
+
     Column(modifier = Modifier.fillMaxSize().padding(top = 16.dp, start = 20.dp, end = 20.dp)) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text("Unduhan", fontWeight = FontWeight.ExtraBold, fontSize = 20.sp, color = Color.White)
@@ -525,7 +732,7 @@ fun DownloadsScreen() {
         }
         Spacer(modifier = Modifier.height(20.dp))
         Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
-            listOf("Semua", "Video", "Audio", "Gambar").forEach { f ->
+            listOf("Semua", "Video", "Audio").forEach { f ->
                 val isSelected = filter == f
                 val bgBrush: Brush = if(isSelected) GradientPrimary else SolidColor(SurfaceColor)
                 Box(modifier = Modifier.padding(end = 10.dp).height(40.dp).clip(CircleShape).background(bgBrush).border(if(!isSelected) 1.dp else 0.dp, BorderColor, CircleShape).clickable { filter = f }.padding(horizontal = 20.dp), contentAlignment = Alignment.Center) {
@@ -538,90 +745,83 @@ fun DownloadsScreen() {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(CyanWarm))
                 Spacer(modifier = Modifier.width(10.dp))
-                Text("SEDANG BERJALAN · 1", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = TextMuted, letterSpacing = 0.5.sp)
+                Text("SEDANG BERJALAN · ${activeTasks.size}", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = TextMuted, letterSpacing = 0.5.sp)
             }
-            Text("Jeda semua", fontSize = 11.sp, color = CyanWarm, fontWeight = FontWeight.SemiBold, modifier = Modifier.clickable { })
         }
         Spacer(modifier = Modifier.height(14.dp))
-        Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(SurfaceColor).border(1.dp, BorderColor, RoundedCornerShape(24.dp)).clickable { }.padding(14.dp)) {
-            Column {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(modifier = Modifier.size(48.dp).clip(CircleShape).background(Color(0x2200E5FF)), contentAlignment = Alignment.Center) {
-                        Icon(painterResource(R.drawable.ic_video), contentDescription = null, tint = CyanWarm, modifier = Modifier.size(20.dp))
+        
+        if (activeTasks.isEmpty()) {
+            Text("Tidak ada unduhan yang sedang berjalan.", color = TextMuted, fontSize = 13.sp, modifier = Modifier.padding(vertical = 8.dp))
+        } else {
+            activeTasks.forEach { task ->
+                Box(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp).clip(RoundedCornerShape(24.dp)).background(SurfaceColor).border(1.dp, BorderColor, RoundedCornerShape(24.dp)).clickable { }.padding(14.dp)) {
+                    Column {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(modifier = Modifier.size(48.dp).clip(CircleShape).background(if (task.isAudio) Color(0x33A020F0) else Color(0x2200E5FF)), contentAlignment = Alignment.Center) {
+                                Icon(painterResource(if (task.isAudio) R.drawable.ic_audio else R.drawable.ic_video), contentDescription = null, tint = CyanWarm, modifier = Modifier.size(20.dp))
+                            }
+                            Spacer(modifier = Modifier.width(14.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(task.title, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                val sizeSpeedEta = listOfNotNull(
+                                    if(task.size.isNotEmpty()) task.size else null,
+                                    if(task.speed.isNotEmpty()) task.speed else null,
+                                    if(task.eta.isNotEmpty()) "Sisa ${task.eta}" else null
+                                ).joinToString(" · ")
+                                Text(if(sizeSpeedEta.isNotEmpty()) sizeSpeedEta else "Menyiapkan...", color = TextMuted, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp))
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(modifier = Modifier.weight(1f).height(8.dp).clip(CircleShape).background(BgColor)) {
+                                Box(modifier = Modifier.fillMaxHeight().fillMaxWidth(task.progress / 100f).background(GradientPrimary))
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Text("${task.progress}%", color = CyanWarm, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
                     }
-                    Spacer(modifier = Modifier.width(14.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("Funny Cat Dance Compilation 2025", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text("82.4 MB · 2.1 MB/s · 12 detik", color = TextMuted, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp))
-                    }
-                    Spacer(modifier = Modifier.width(14.dp))
-                    Box(modifier = Modifier.size(40.dp).clip(CircleShape).background(BgColor).border(1.dp, BorderColor, CircleShape).clickable { }, contentAlignment = Alignment.Center) {
-                        Icon(painterResource(R.drawable.ic_pause), contentDescription = null, tint = CyanWarm, modifier = Modifier.size(16.dp))
-                    }
-                }
-                Spacer(modifier = Modifier.height(16.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(modifier = Modifier.weight(1f).height(8.dp).clip(CircleShape).background(BgColor)) {
-                        Box(modifier = Modifier.fillMaxHeight().fillMaxWidth(0.7f).background(GradientPrimary))
-                    }
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Text("70%", color = CyanWarm, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }
+        
         Spacer(modifier = Modifier.height(30.dp))
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text("SELESAI · OFFLINE", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = TextMuted, letterSpacing = 0.5.sp)
-            Text("Urutkan", fontSize = 11.sp, color = CyanWarm, fontWeight = FontWeight.SemiBold, modifier = Modifier.clickable { })
+            Text("HISTORY · ${filteredHistory.size}", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = TextMuted, letterSpacing = 0.5.sp)
         }
         Spacer(modifier = Modifier.height(14.dp))
         
-        Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(SurfaceColor).border(1.dp, BorderColor, RoundedCornerShape(24.dp)).clickable { }.padding(14.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(modifier = Modifier.width(50.dp).height(75.dp).clip(RoundedCornerShape(12.dp)).background(Brush.linearGradient(listOf(Color(0xFF000000), Color(0xFF333333))))) {
-                    Text("0:42", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.BottomEnd).padding(4.dp).background(Color(0x99000000), RoundedCornerShape(4.dp)).padding(horizontal = 4.dp, vertical = 2.dp))
-                }
-                Spacer(modifier = Modifier.width(14.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Man playing guitar in the rain - cinematic", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Row(modifier = Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Box(modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(BgColor).border(1.dp, BorderColor, RoundedCornerShape(6.dp)).padding(horizontal = 6.dp, vertical = 3.dp)) {
-                            Text("TikTok", color = TextMuted, fontSize = 10.sp)
+        if (filteredHistory.isEmpty()) {
+            Text("Belum ada riwayat unduhan.", color = TextMuted, fontSize = 13.sp, modifier = Modifier.padding(vertical = 8.dp))
+        } else {
+            filteredHistory.forEach { task ->
+                Box(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp).clip(RoundedCornerShape(24.dp)).background(SurfaceColor).border(1.dp, BorderColor, RoundedCornerShape(24.dp)).clickable { }.padding(14.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(modifier = Modifier.size(48.dp).clip(CircleShape).background(if (task.isAudio) Color(0x33A020F0) else Color(0x2200E5FF)), contentAlignment = Alignment.Center) {
+                            Icon(painterResource(if (task.isAudio) R.drawable.ic_audio else R.drawable.ic_video), contentDescription = null, tint = CyanWarm, modifier = Modifier.size(20.dp))
                         }
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("@unsplash", color = TextMuted, fontSize = 11.sp)
-                    }
-                    Text("48.2 MB", color = TextMuted, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp))
-                }
-                Spacer(modifier = Modifier.width(14.dp))
-                Box(modifier = Modifier.size(40.dp).clip(CircleShape).glow(alpha = 0.2f).background(GradientPrimary).clickable { }, contentAlignment = Alignment.Center) {
-                    Icon(painterResource(R.drawable.ic_play), contentDescription = null, tint = Color.Black, modifier = Modifier.size(16.dp))
-                }
-            }
-        }
-        
-        Spacer(modifier = Modifier.height(14.dp))
-
-        Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(SurfaceColor).border(1.dp, BorderColor, RoundedCornerShape(24.dp)).clickable { }.padding(14.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(modifier = Modifier.width(80.dp).height(45.dp).clip(RoundedCornerShape(12.dp)).background(Brush.linearGradient(listOf(Color(0xFF8B0000), Color(0xFFFF8C00))))) {
-                    Text("6:13", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.BottomEnd).padding(4.dp).background(Color(0x99000000), RoundedCornerShape(4.dp)).padding(horizontal = 4.dp, vertical = 2.dp))
-                }
-                Spacer(modifier = Modifier.width(14.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Moha Jadu | Coke Studio Bangla S2", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Row(modifier = Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Box(modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(BgColor).border(1.dp, BorderColor, RoundedCornerShape(6.dp)).padding(horizontal = 6.dp, vertical = 3.dp)) {
-                            Text("YouTube", color = TextMuted, fontSize = 10.sp)
+                        Spacer(modifier = Modifier.width(14.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(task.title, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            Row(modifier = Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Box(modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(BgColor).border(1.dp, BorderColor, RoundedCornerShape(6.dp)).padding(horizontal = 6.dp, vertical = 3.dp)) {
+                                    Text(if (task.isAudio) "Audio" else "Video", color = TextMuted, fontSize = 10.sp)
+                                }
+                                if(task.size.isNotEmpty()) {
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(task.size, color = TextMuted, fontSize = 11.sp)
+                                }
+                            }
+                            if (task.status == TaskStatus.FAILED && task.speed.isNotEmpty()) {
+                                Text(task.speed, color = Color.Red, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp))
+                            }
                         }
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Coke Studio", color = TextMuted, fontSize = 11.sp)
+                        Spacer(modifier = Modifier.width(14.dp))
+                        if (task.status == TaskStatus.FAILED) {
+                            Icon(Icons.Default.Close, contentDescription = null, tint = Color.Red, modifier = Modifier.size(20.dp))
+                        } else {
+                            Icon(Icons.Default.Check, contentDescription = null, tint = CyanWarm, modifier = Modifier.size(20.dp))
+                        }
                     }
-                    Text("124.6 MB", color = TextMuted, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp))
-                }
-                Spacer(modifier = Modifier.width(14.dp))
-                Box(modifier = Modifier.size(40.dp).clip(CircleShape).glow(alpha = 0.2f).background(GradientPrimary).clickable { }, contentAlignment = Alignment.Center) {
-                    Icon(painterResource(R.drawable.ic_play), contentDescription = null, tint = Color.Black, modifier = Modifier.size(16.dp))
                 }
             }
         }

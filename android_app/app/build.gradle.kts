@@ -75,4 +75,7 @@ dependencies {
     // Image Loader (Coil + GIF Support)
     implementation("io.coil-kt:coil-compose:2.5.0")
     implementation("io.coil-kt:coil-gif:2.5.0")
+    
+    // GSON Dependency untuk riwayat unduhan
+    implementation("com.google.code.gson:gson:2.10.1")
 }
