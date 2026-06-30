@@ -31,7 +31,7 @@ class SimpanVideoApp : Application() {
                 
                 // Menyamakan dengan YTDLnis: Melakukan update engine yt-dlp secara otomatis
                 try {
-                    YoutubeDL.getInstance().update(this@SimpanVideoApp)
+                    YoutubeDL.getInstance().updateYoutubeDL(this@SimpanVideoApp, YoutubeDL.UpdateChannel.STABLE)
                     Log.d("SimpanVideoApp", "yt-dlp berhasil di-update ke versi terbaru.")
                 } catch (e: Exception) {
                     Log.e("SimpanVideoApp", "Gagal update yt-dlp (mungkin offline): ${e.message}")
