@@ -280,6 +280,13 @@ fun HomeScreen() {
                     req.addOption("--no-playlist")
                     req.addOption("--no-warnings")
                     req.addOption("--compat-options", "no-youtube-unavailable-videos")
+                    req.addOption("-R", "1") // Retries = 1
+                    req.addOption("--socket-timeout", "5") // Timeout 5 detik
+                    req.addOption("--no-check-certificate") // Lewati validasi SSL
+                    req.addOption("--no-check-certificates")
+                    req.addOption("--flat-playlist") // Cegah load detail item playlist
+                    req.addOption("--skip-download")
+                    req.addOption("--quiet")
                     YoutubeDL.getInstance().getInfo(req)
                 }
                 mediaInfo = info

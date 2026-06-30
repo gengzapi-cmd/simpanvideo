@@ -9,7 +9,7 @@ android {
 
     defaultConfig {
         applicationId = "com.simpanvideo.app"
-        minSdk = 24
+        minSdk = 28
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
@@ -19,9 +19,9 @@ android {
             useSupportLibrary = true
         }
         
-        // Membatasi arsitektur CPU hanya untuk HP asli (membuang binary emulator x86 yang sangat besar)
+        // Hanya mendukung HP Android modern 64-bit (memangkas ukuran APK di bawah 40MB)
         ndk {
-            abiFilters.addAll(listOf("armeabi-v7a", "arm64-v8a"))
+            abiFilters.addAll(listOf("arm64-v8a"))
         }
     }
     

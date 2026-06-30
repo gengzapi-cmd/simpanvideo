@@ -28,6 +28,15 @@ class SimpanVideoApp : Application() {
                 EngineState.status.value = EngineStatus.INITIALIZING
                 YoutubeDL.getInstance().init(this@SimpanVideoApp)
                 FFmpeg.getInstance().init(this@SimpanVideoApp)
+                
+                // Menyamakan dengan YTDLnis: Melakukan update engine yt-dlp secara otomatis
+                try {
+                    YoutubeDL.getInstance().update(this@SimpanVideoApp)
+                    Log.d("SimpanVideoApp", "yt-dlp berhasil di-update ke versi terbaru.")
+                } catch (e: Exception) {
+                    Log.e("SimpanVideoApp", "Gagal update yt-dlp (mungkin offline): ${e.message}")
+                }
+
                 Log.d("SimpanVideoApp", "YTDLnis (YoutubeDL & FFmpeg) initialized successfully.")
                 EngineState.status.value = EngineStatus.READY
             } catch (e: Exception) {
