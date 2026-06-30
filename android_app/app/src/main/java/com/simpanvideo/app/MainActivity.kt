@@ -61,6 +61,7 @@ import java.io.File
 import android.widget.Toast
 import java.util.concurrent.TimeUnit
 import android.Manifest
+import android.Manifest
 import android.content.pm.PackageManager
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -133,7 +134,7 @@ class MainActivity : ComponentActivity() {
                                         Column {
                                             Text("Menyiapkan Mesin...", fontFamily = PoppinsFont, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                                             Spacer(modifier = Modifier.height(2.dp))
-                                            Text(if(EngineState.errorMessage.isBlank()) "Memuat dependensi inti" else EngineState.errorMessage, fontFamily = PoppinsFont, color = Color.LightGray, fontSize = 12.sp)
+                                            Text(if(EngineState.errorMessage.isBlank()) "Memuat dependensi inti" else EngineState.errorMessage, fontFamily = PoppinsFont, color = TextMuted, fontSize = 12.sp)
                                         }
                                     }
                                 }
@@ -205,14 +206,12 @@ fun startDownload(context: Context, videoUrl: String, formatId: String, title: S
 
         try {
             val request = YoutubeDLRequest(videoUrl)
-            if (isAudio) {
-                request.addOption("-f", formatId)
-            } else {
-                request.addOption("-f", "$formatId+bestaudio/best")
-            }
+            // formatId sudah mencakup string lengkap (tidak butuh if-else isAudio)
+            request.addOption("-f", formatId)
             
-            val downloadDir = File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS), "SimpanVideo")
-            if (!downloadDir.exists()) downloadDir.mkdirs()
+            val downloadDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+            // Tanpa subfolder, langsung ke folder Downloads
+
             
             val safeTitle = title.replace(Regex("[\\\\/:*?\"<>|]"), "_")
             request.addOption("-o", "${downloadDir.absolutePath}/$safeTitle.%(ext)s")
@@ -283,6 +282,7 @@ fun HomeScreen() {
                     val req = YoutubeDLRequest(urlInput)
                     req.addOption("--no-playlist")
                     req.addOption("--no-warnings")
+                    req.addOption("--compat-options", "no-youtube-unavailable-videos")
                     YoutubeDL.getInstance().getInfo(req)
                 }
                 mediaInfo = info
@@ -438,10 +438,6 @@ fun HomeScreen() {
                         Text(finalTitle, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp))
 
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(modifier = Modifier.size(48.dp).clip(CircleShape).background(SurfaceColor).border(1.dp, BorderColor, CircleShape), contentAlignment = Alignment.Center) {
-                                Icon(Icons.Default.Person, contentDescription = null, tint = Color.LightGray, modifier = Modifier.size(24.dp))
-                            }
-                            Spacer(modifier = Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(info.uploader ?: "Unknown", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                                 Text("$viewsStr views · $likesStr likes", color = TextMuted, fontSize = 12.sp)
@@ -459,25 +455,27 @@ fun HomeScreen() {
                         AnimatedVisibility(visible = openOptions, enter = expandVertically(spring(stiffness = Spring.StiffnessLow)), exit = shrinkVertically(spring(stiffness = Spring.StiffnessLow))) {
                             Column(modifier = Modifier.padding(top = 8.dp)) {
                                 val context = LocalContext.current
-                                val formats = info.formats ?: arrayListOf()
-                                
-                                val bestAudio = formats.filter { it.ext == "m4a" || it.ext == "mp3" || (it.acodec != "none" && it.vcodec == "none") }.maxByOrNull { it.abr?.toString()?.toDoubleOrNull() ?: 0.0 }
-                                val videoFormats = formats.filter { it.vcodec != "none" && it.vcodec != null }
-                                    .sortedByDescending { it.height ?: 0 }
-                                    .distinctBy { it.height }
-                                    .take(4) // 1080p, 720p, 480p, dll
                                 
                                 data class DlOption(val label: String, val desc: String, val kind: String, val formatId: String)
-                                val downloadOptions = mutableListOf<DlOption>()
                                 
-                                videoFormats.forEach { fmt ->
-                                    val sizeStr = if ((fmt.fileSize ?: 0L) > 0L) formatNumber(fmt.fileSize!!) else "Ukuran tidak diketahui"
-                                    downloadOptions.add(DlOption("${fmt.height}p", "${fmt.ext?.uppercase()} · $sizeStr", "video", fmt.formatId ?: ""))
-                                }
-                                if (bestAudio != null) {
-                                    val sizeStr = if ((bestAudio.fileSize ?: 0L) > 0L) formatNumber(bestAudio.fileSize!!) else "Ukuran tidak diketahui"
-                                    downloadOptions.add(DlOption("Audio", "${bestAudio.ext?.uppercase()} · $sizeStr", "audio", bestAudio.formatId ?: ""))
-                                }
+                                val downloadOptions = listOf(
+                                    DlOption("Kualitas Terbaik", "Paling Jernih", "video", "bestvideo+bestaudio/best"),
+                                    DlOption("2160p (4K)", "Ultra HD", "video", "bestvideo[height<=2160]+bestaudio/best"),
+                                    DlOption("1440p (2K)", "Quad HD", "video", "bestvideo[height<=1440]+bestaudio/best"),
+                                    DlOption("1080p", "Full HD", "video", "bestvideo[height<=1080]+bestaudio/best"),
+                                    DlOption("720p", "High Definition", "video", "bestvideo[height<=720]+bestaudio/best"),
+                                    DlOption("480p", "Standard", "video", "bestvideo[height<=480]+bestaudio/best"),
+                                    DlOption("360p", "Low", "video", "bestvideo[height<=360]+bestaudio/best"),
+                                    DlOption("240p", "Sangat Rendah", "video", "bestvideo[height<=240]+bestaudio/best"),
+                                    DlOption("Kualitas Terburuk", "Paling Hemat Kuota", "video", "worstvideo+worstaudio/worst"),
+                                    DlOption("Audio Terbaik", "Kualitas Tertinggi", "audio", "bestaudio/best"),
+                                    DlOption("Audio 192kbps", "MP3/M4A", "audio", "bestaudio[abr<=192]/bestaudio"),
+                                    DlOption("Audio 160kbps", "MP3/M4A", "audio", "bestaudio[abr<=160]/bestaudio"),
+                                    DlOption("Audio 128kbps", "MP3/M4A", "audio", "bestaudio[abr<=128]/bestaudio"),
+                                    DlOption("Audio 96kbps", "MP3/M4A", "audio", "bestaudio[abr<=96]/bestaudio"),
+                                    DlOption("Audio 64kbps", "MP3/M4A", "audio", "bestaudio[abr<=64]/bestaudio"),
+                                    DlOption("Audio Terburuk", "Paling Hemat Kuota", "audio", "worstaudio/worst")
+                                )
 
                                 downloadOptions.forEachIndexed { index, option ->
                                     Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp).clip(RoundedCornerShape(20.dp)).background(Color(0x80161B22)).border(1.dp, BorderColor, RoundedCornerShape(20.dp)).clickable { }.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
